@@ -1,0 +1,19 @@
+"""UI 主题常量。"""
+
+# 主色（FableTech 品牌）
+PRIMARY = "#4F6BED"
+PRIMARY_HOVER = "#3D57D6"
+BG_DARK = "#1E1F24"
+BG_PANEL = "#2A2C33"
+BG_INPUT = "#33353D"
+TEXT_MAIN = "#E8E9EC"
+TEXT_MUTED = "#9BA0AA"
+DANGER = "#E5484D"
+WARNING = "#F5A524"
+SUCCESS = "#46A758"
+
+FONT = ("Microsoft YaHei UI", 12)
+FONT_SMALL = ("Microsoft YaHei UI", 11)
+FONT_TITLE = ("Microsoft YaHei UI", 16, "bold")
+
+WINDOW_SIZE = "1180x760"
