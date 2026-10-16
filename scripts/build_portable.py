@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 PORTABLE_NAME = "FableTech-portable"
-ZIP_NAME = "FableTech-1.0.0-win-x64-portable.zip"
+ZIP_NAME = "FableTech-1.0.1-win-x64-portable.zip"
 
 HIDDEN_IMPORTS = [
     "camoufox", "camoufox.pkgman", "camoufox.async_api", "camoufox.sync_api",
@@ -36,7 +36,7 @@ HIDDEN_IMPORTS = [
     "customtkinter",
 ]
 
-README_PORTABLE = """FableTech Browser 1.0.0 — 便携版（win-x64）
+README_PORTABLE = """FableTech Browser 1.0.1 — 便携版（win-x64）
 ==========================================
 
 快速开始
@@ -139,6 +139,10 @@ def main() -> int:
     shutil.copy2(gui_exe, portable / "FableTech.exe")
     shutil.copy2(cli_dir / f"{cli_name}.exe",
                  portable / "fabletech-cli.exe")
+    # 删除冗余的时间戳 exe（copytree 带入的原始构建产物）——
+    # 避免用户误点旧命名的 exe（曾导致"双击报错"的误判）
+    (portable / f"{gui_name}.exe").unlink(missing_ok=True)
+    (portable / f"{cli_name}.exe").unlink(missing_ok=True)
 
     # 3) 便携标记 + 空数据目录 + 运行时说明
     (portable / "portable.flag").write_text(

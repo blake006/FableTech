@@ -68,6 +68,9 @@ python -m fabletech run-recipe --profile <id> --recipe outlook_register --params
 - [05 开发任务书](docs/05-开发任务书.md) —— 实现规格与红线
 - [06 使用/操作手册](docs/06-使用操作手册.md) —— 安装、档案、代理、Outlook 注册实操、FAQ
 - [07 维护手册](docs/07-维护手册.md) —— 备份恢复、引擎更新、故障排查、安全审计
+- [08 GeekezBrowser 调研与借鉴](docs/08-GeekezBrowser调研与借鉴.md) —— 同类产品分析、v1.1 借鉴路线
+
+**当前版本：v1.0.1**（v1.0.0 + GUI 启动修复 + Hysteria2/AnyTLS 支持 + 打包修复）
 
 ## 技术栈
 
