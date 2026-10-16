@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from .config import ensure_dirs, is_portable, paths
 from .core.cookies import CookieVault
 from .core.crypto import Vault, VaultError
+from .core.logger import log_event
 from .core.profiles import ProfileService
 from .core.scheduler import Scheduler
 from .core.storage import Storage
-from .logger import log_event
 
 
 class App:
@@ -62,37 +63,60 @@ class App:
     def shutdown(self) -> None:
         if self.profiles:
             self.profiles.close_all()
+        # 回收可能残留的本地中转进程（hy2/anytls）
+        try:
+            from .core.relay import relay_manager
+            relay_manager().stop_all()
+        except Exception:
+            pass
 
 
 def run_gui() -> int:
-    """GUI 入口（首次启动主密码创建 / 后续解锁 → 主窗口）。"""
+    """GUI 入口（首次启动主密码创建 / 后续解锁 → 主窗口）。
+
+    环境变量 FABLETECH_MASTER_PASSWORD：设置后跳过对话框直接
+    创建/解锁（与 CLI 一致，供自动化/无人值守场景；注意环境变量
+    对本机其他进程可见，仅在受控环境使用）。
+    """
     app = App()
     if app.locked:
         import customtkinter as ctk
+        import os
         from .ui.widgets import (
             apply_theme, ask_master_password, show_error,
         )
         apply_theme()
-        root = ctk.CTk()
-        root.withdraw()
-        if Vault.is_initialized(app.paths.db):
-            while True:
-                pw = ask_master_password(root, "解锁 FableTech")
+        env_pw = os.environ.get("FABLETECH_MASTER_PASSWORD")
+        if env_pw:
+            try:
+                if Vault.is_initialized(app.paths.db):
+                    app.unlock(env_pw)
+                else:
+                    app.setup_master_password(env_pw)
+            except VaultError as e:
+                print(f"FABLETECH_MASTER_PASSWORD 无效：{e}", file=sys.stderr)
+                return 2
+        else:
+            root = ctk.CTk()
+            root.withdraw()
+            if Vault.is_initialized(app.paths.db):
+                while True:
+                    pw = ask_master_password(root, "解锁 FableTech")
+                    if pw is None:
+                        root.destroy()
+                        return 1
+                    try:
+                        app.unlock(pw)
+                        break
+                    except VaultError as e:
+                        show_error(root, "解锁失败", str(e))
+            else:
+                pw = ask_master_password(root, "设置主密码", is_create=True)
                 if pw is None:
                     root.destroy()
                     return 1
-                try:
-                    app.unlock(pw)
-                    break
-                except VaultError as e:
-                    show_error(root, "解锁失败", str(e))
-        else:
-            pw = ask_master_password(root, "设置主密码", is_create=True)
-            if pw is None:
-                root.destroy()
-                return 1
-            app.setup_master_password(pw)
-        root.destroy()
+                app.setup_master_password(pw)
+            root.destroy()
 
     from .ui.main_window import MainWindow
     win = MainWindow(app)

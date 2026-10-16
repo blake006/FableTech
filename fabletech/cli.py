@@ -168,6 +168,23 @@ def cmd_import_cookies(args) -> int:
     return 0
 
 
+def _relay_test_cli(key: str, proxy) -> None:
+    """中转型代理 CLI 测试：启动本地中转 → 实测链路 → 出口地理 → 释放。"""
+    from .core.relay import relay_manager
+    from .core.proxy import test_relay_proxy, suggest_locale
+    print(f"{proxy.masked_url()} → 正在启动本地中转…")
+    try:
+        host, port = relay_manager().endpoint_for(key, proxy)
+        ok, info = test_relay_proxy(host, port)
+    except Exception as e:
+        print(f"{proxy.masked_url()} → 不可用（{e}）")
+        relay_manager().release(key)
+        return
+    print(f"{proxy.masked_url()} → {'可用' if ok else '不可用'}"
+          + (f"（{info}）" if ok else f"（{info}）"))
+    relay_manager().release(key)
+
+
 def cmd_proxy_test(args) -> int:
     if args.url:
         ok_list, bad = parse_proxy_bulk(args.url)
@@ -175,6 +192,9 @@ def cmd_proxy_test(args) -> int:
             for lineno, text, reason in bad:
                 print(f"跳过第 {lineno} 行：{reason}", file=sys.stderr)
         for p in ok_list:
+            if p.is_relay:
+                _relay_test_cli(f"cli-{abs(hash(p.url())) % 10**8}", p)
+                continue
             ok, latency, msg = run_proxy_test(p)
             print(f"{p.masked_url()} → {'可用' if ok else '不可用'}"
                   + (f"（{latency}ms）" if ok else f"（{msg}）"))
@@ -193,11 +213,21 @@ def cmd_proxy_test(args) -> int:
             print("代理不存在", file=sys.stderr)
             return 2
         from .core.proxy import ProxyInfo
-        username = password = None
+        username = password = extra = None
         if row.get("username_enc"):
             username = vault.decrypt_str(row["username_enc"].hex())
         if row.get("password_enc"):
             password = vault.decrypt_str(row["password_enc"].hex())
+        if row.get("extra_enc"):
+            try:
+                extra = json.loads(vault.decrypt_str(row["extra_enc"].hex()))
+            except Exception:
+                extra = None
+        if row["type"] in ("hysteria2", "anytls") or extra:
+            p = ProxyInfo.from_extra(row["type"], row["host"], row["port"],
+                                     username, password, extra)
+            _relay_test_cli(args.proxy_id, p)
+            return 0
         p = ProxyInfo(row["type"], row["host"], row["port"], username, password)
         ok, latency, msg = run_proxy_test(p)
         print(f"{p.masked_url()} → {'可用' if ok else '不可用'}"

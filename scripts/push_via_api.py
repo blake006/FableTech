@@ -35,6 +35,12 @@ def git(*args):
                           encoding='utf-8').stdout
 
 
+def git_bytes(*args):
+    """按字节读取 git 输出（二进制文件如图标必须用此）。"""
+    return subprocess.run(['git', '-c', 'core.quotePath=false'] + list(args),
+                          capture_output=True).stdout
+
+
 def commit_files(sha):
     # 根 commit 无父提交，diff-tree 需 --root；统一用 show 更稳
     out = git('show', '--pretty=format:', '--name-only', sha)
@@ -61,9 +67,9 @@ def push_commit(sha, parent_remote_sha, force=False):
     print(f'  pushing {sha[:7]} ({len(files)} files): {commit_message(sha).splitlines()[0][:60]}')
     tree_entries = []
     for path in files:
-        content = git('show', f'{sha}:{path}')
+        content = git_bytes('show', f'{sha}:{path}')  # 字节读取（兼容二进制）
         blob = api('POST', '/git/blobs', {
-            'content': base64.b64encode(content.encode('utf-8')).decode(),
+            'content': base64.b64encode(content).decode('ascii'),
             'encoding': 'base64',
         })
         tree_entries.append({

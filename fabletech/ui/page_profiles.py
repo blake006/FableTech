@@ -152,9 +152,13 @@ class ProfilesPage(PageFrame):
                 self.after(0, lambda: (self.status_lbl.configure(text="已启动"),
                                        self._refresh()))
             except EngineUnavailableError as e:
-                self.after(0, lambda: show_error(self, "引擎不可用", str(e)))
+                # 注意：except 的 e 在块结束即删除，lambda 延迟执行会
+                # NameError；必须先取为局部变量再用默认参数绑定
+                msg = str(e)
+                self.after(0, lambda m=msg: show_error(self, "引擎不可用", m))
             except Exception as e:
-                self.after(0, lambda: show_error(self, "启动失败", str(e)))
+                msg = str(e)
+                self.after(0, lambda m=msg: show_error(self, "启动失败", m))
 
         threading.Thread(target=worker, daemon=True).start()
 

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS proxies(
     port INTEGER NOT NULL,
     username_enc BLOB,
     password_enc BLOB,
+    extra_enc BLOB,
     tags TEXT DEFAULT '',
     last_check_at TEXT,
     latency_ms INTEGER,
@@ -93,6 +94,15 @@ class Storage:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(_SCHEMA)
+            self._migrate(conn)
+
+    @staticmethod
+    def _migrate(conn: sqlite3.Connection) -> None:
+        """旧库安全迁移：补充后续版本新增的列（存在则跳过）。"""
+        cols = {r[1] for r in
+                conn.execute("PRAGMA table_info(proxies)").fetchall()}
+        if "extra_enc" not in cols:
+            conn.execute("ALTER TABLE proxies ADD COLUMN extra_enc BLOB")
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -168,13 +178,16 @@ class Storage:
     def create_proxy(self, type: str, host: str, port: int,
                      username_enc: bytes | None = None,
                      password_enc: bytes | None = None,
+                     extra_enc: bytes | None = None,
                      tags: str = "", enabled: int = 1) -> dict:
         pid = new_id()
         with self._conn() as conn:
             conn.execute(
                 "INSERT INTO proxies(id, type, host, port, username_enc,"
-                " password_enc, tags, enabled) VALUES (?,?,?,?,?,?,?,?)",
-                (pid, type, host, port, username_enc, password_enc, tags, enabled),
+                " password_enc, extra_enc, tags, enabled)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (pid, type, host, port, username_enc, password_enc,
+                 extra_enc, tags, enabled),
             )
         return self.get_proxy(pid)
 
@@ -196,8 +209,8 @@ class Storage:
 
     def update_proxy(self, proxy_id: str, **fields: Any) -> None:
         allowed = {"type", "host", "port", "username_enc", "password_enc",
-                   "tags", "last_check_at", "latency_ms", "country", "city",
-                   "enabled"}
+                   "extra_enc", "tags", "last_check_at", "latency_ms",
+                   "country", "city", "enabled"}
         bad = set(fields) - allowed
         if bad:
             raise ValueError(f"非法字段: {bad}")

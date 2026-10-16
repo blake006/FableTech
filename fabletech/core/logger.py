@@ -25,16 +25,27 @@ _CRED_RE = re.compile(r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*)://"
                       r"(?P<user>[^:@/]+):(?P<pass>[^@/]+)@"
                       r"(?P<host>[^@/\s]+)")
 
+# 无冒号 auth@host 形式（hy2/anytls 的 userinfo 整体是 auth）
+_AUTH_ONLY_RE = re.compile(r"(?P<scheme>[a-zA-Z][a-zA-Z0-9+.-]*)://"
+                           r"(?P<auth>[^:@/\s]+)@"
+                           r"(?P<host>[^@/\s]+)")
+
 
 def mask_credentials(url: str) -> str:
-    """socks5://user:pass@host:port → socks5://u***:p***@host:port"""
+    """socks5://user:pass@host:port → socks5://u***:p***@host:port
+
+    同时处理 hy2/anytls 的 auth@host 形式 → u***@host。
+    """
     if not url:
         return url
 
     def _sub(m: re.Match[str]) -> str:
         return f"{m.group('scheme')}://u***:p***@{m.group('host')}"
 
-    return _CRED_RE.sub(_sub, url)
+    def _sub_auth(m: re.Match[str]) -> str:
+        return f"{m.group('scheme')}://u***@{m.group('host')}"
+
+    return _AUTH_ONLY_RE.sub(_sub_auth, _CRED_RE.sub(_sub, url))
 
 
 def sanitize(text: str) -> str:

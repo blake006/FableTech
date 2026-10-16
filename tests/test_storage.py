@@ -103,3 +103,42 @@ def test_injection_safe_values(st):
     p = st.create_profile(evil, "camoufox", "s")
     assert st.get_profile(p["id"])["name"] == evil
     assert len(st.list_profiles()) == 1
+
+
+def test_proxy_extra_enc_roundtrip(st):
+    """hy2/anytls 扩展参数加密列：写入 → 读取 → 更新。"""
+    pr = st.create_proxy("hysteria2", "h.com", 443,
+                         extra_enc=b'{"sni":"r.com","insecure":true}')
+    got = st.get_proxy(pr["id"])
+    assert got["extra_enc"] == b'{"sni":"r.com","insecure":true}'
+    st.update_proxy(pr["id"], extra_enc=b'{"sni":"r2.com"}')
+    assert st.get_proxy(pr["id"])["extra_enc"] == b'{"sni":"r2.com"}'
+
+
+def test_proxy_migration_adds_extra_column(tmp_path):
+    """旧库（无 extra_enc 列）打开后自动迁移补列。"""
+    import sqlite3
+    set_data_dir_override(tmp_path)
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(db)
+    # 构造 v1.0 旧 schema（无 extra_enc）
+    conn.executescript(
+        "CREATE TABLE proxies(id TEXT PRIMARY KEY, type TEXT NOT NULL,"
+        " host TEXT NOT NULL, port INTEGER NOT NULL, username_enc BLOB,"
+        " password_enc BLOB, tags TEXT DEFAULT '', last_check_at TEXT,"
+        " latency_ms INTEGER, country TEXT, city TEXT,"
+        " enabled INTEGER DEFAULT 1);"
+        "INSERT INTO proxies(id,type,host,port) VALUES('old1','socks5','1.2.3.4',1080);")
+    conn.commit()
+    conn.close()
+    # 用新 Storage 打开 → 触发迁移
+    st = Storage(db)
+    cols = {r[1] for r in
+            sqlite3.connect(db).execute("PRAGMA table_info(proxies)").fetchall()}
+    assert "extra_enc" in cols
+    # 旧数据完好，新列可写
+    assert st.get_proxy("old1")["host"] == "1.2.3.4"
+    pr = st.create_proxy("anytls", "a.com", 8443, extra_enc=b'{"sni":"x"}')
+    assert st.get_proxy(pr["id"])["extra_enc"] == b'{"sni":"x"}'
+    from fabletech.config import clear_data_dir_override
+    clear_data_dir_override()

@@ -2,13 +2,14 @@
 
 启动编排（对应架构 4.1）：
   读档案(engine/seed/proxy_id) → engine_config(fp, engine)
-  → ProxyService 解析 → CookieVault.load → Engine.launch(LaunchSpec)
-  → 记录 last_launched_at + 日志
+  → ProxyService 解析（hy2/anytls 经 mihomo 本地中转为 SOCKS5）
+  → CookieVault.load → Engine.launch(LaunchSpec) → 记录 last_launched_at + 日志
 红线：运行中档案不可重复启动（注册表控制）。
 """
 
 from __future__ import annotations
 
+import json
 import threading
 from pathlib import Path
 
@@ -18,7 +19,8 @@ from .cookies import CookieVault
 from .crypto import Vault
 from .engines import EngineSession, get_engine
 from .fingerprint import engine_config, generate_fingerprint, new_seed
-from .proxy import ProxyInfo
+from .proxy import RELAY_TYPES, ProxyInfo
+from .relay import relay_manager
 from .storage import Storage
 
 PROFILE_STATUSES = {"active", "exception", "banned"}
@@ -73,6 +75,7 @@ class ProfileService:
     # ---------- 代理解析 ----------
 
     def resolve_proxy(self, profile: dict) -> ProxyInfo | None:
+        """解析档案绑定的代理（含 hy2/anytls 扩展参数解密重建）。"""
         pid = profile.get("proxy_id")
         if not pid:
             return None
@@ -84,8 +87,38 @@ class ProfileService:
             username = self.vault.decrypt_str(row["username_enc"].hex())
         if row.get("password_enc"):
             password = self.vault.decrypt_str(row["password_enc"].hex())
+        extra = None
+        if row.get("extra_enc"):
+            try:
+                extra = json.loads(self.vault.decrypt_str(row["extra_enc"].hex()))
+            except Exception:
+                extra = None
+        if row["type"] in RELAY_TYPES or extra:
+            return ProxyInfo.from_extra(
+                row["type"], row["host"], row["port"],
+                username, password, extra)
         return ProxyInfo(type=row["type"], host=row["host"], port=row["port"],
                          username=username, password=password)
+
+    def _engine_proxy(self, profile: dict, proxy: ProxyInfo) -> tuple[ProxyInfo, str | None]:
+        """把档案代理转换为引擎可用的连接目标。
+
+        - http/socks5：直连
+        - hy2/hysteria2/anytls：经 mihomo 本地中转 → socks5://127.0.0.1:port
+        返回 (引擎用代理, 中转 proxy_id[需要释放时])
+        """
+        if not proxy.is_relay:
+            return proxy, None
+        pid = profile.get("proxy_id")
+        if not pid:
+            return proxy, None
+        host, port = relay_manager().endpoint_for(pid, proxy)
+        local = ProxyInfo(type="socks5", host=host, port=port,
+                          username=None, password=None)
+        log_event("INFO", "relay",
+                  f"档案代理经本地中转接入：{proxy.masked_url()} → "
+                  f"socks5://{host}:{port}")
+        return local, pid
 
     # ---------- 启动编排 ----------
 
@@ -115,15 +148,28 @@ class ProfileService:
             from .proxy import suggest_locale
             cfg["locale"] = suggest_locale(geo["country"])
 
-        spec = None
+        # hy2/anytls → mihomo 本地中转；引擎始终拿到 http/socks5
+        engine_proxy, relay_pid = (None, None)
+        if proxy is not None:
+            engine_proxy, relay_pid = self._engine_proxy(profile, proxy)
+
         from .engines.base import LaunchSpec
         spec = LaunchSpec(
             profile_id=profile_id,
             user_data_dir=profile_user_data_dir(profile_id),
-            proxy=proxy, fingerprint=fp, engine_cfg=cfg,
+            proxy=engine_proxy, fingerprint=fp, engine_cfg=cfg,
             headless=headless,
         )
-        session = engine.launch(spec)
+        try:
+            session = engine.launch(spec)
+        except Exception:
+            # 启动失败要释放中转引用，避免进程泄漏
+            if relay_pid:
+                relay_manager().release(relay_pid)
+            raise
+        # 记录中转归属，关闭时释放
+        if relay_pid:
+            session.relay_proxy_id = relay_pid  # type: ignore[attr-defined]
 
         with self._lock:
             self._running[profile_id] = session
@@ -176,6 +222,13 @@ class ProfileService:
             session = self._running.pop(profile_id, None)
         if session is None:
             return
+        # 释放本地中转引用（hy2/anytls 档案）
+        relay_pid = getattr(session, "relay_proxy_id", None)
+        if relay_pid:
+            try:
+                relay_manager().release(relay_pid)
+            except Exception as e:
+                log_event("WARNING", "relay", f"中转释放异常：{e}")
         try:
             engine = get_engine(session.engine)
             engine.close(session)

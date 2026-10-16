@@ -57,6 +57,8 @@ class Paths:
     logs: Path          # 日志文件目录
     user_data: Path     # 各档案浏览器 user_data_dir 的父目录
     backups: Path       # 导出档案包等
+    bin: Path           # 运行时下载的二进制（mihomo 中转内核）
+    relays: Path        # 本地中转进程的配置与日志
 
 
 def _paths() -> Paths:
@@ -78,6 +80,8 @@ def _paths() -> Paths:
         logs=root / "logs",
         user_data=root / "user_data",
         backups=root / "backups",
+        bin=root / "bin",
+        relays=root / "relays",
     )
 
 
@@ -87,7 +91,8 @@ def paths() -> Paths:
 
 def ensure_dirs(p: Paths | None = None) -> Paths:
     p = p or paths()
-    for d in (p.root, p.cookies, p.screenshots, p.logs, p.user_data, p.backups):
+    for d in (p.root, p.cookies, p.screenshots, p.logs, p.user_data,
+              p.backups, p.relays):
         d.mkdir(parents=True, exist_ok=True)
     return p
 
