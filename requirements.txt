@@ -1,0 +1,6 @@
+# FableTech 核心依赖（GUI 与基础功能，打包进便携包）
+customtkinter>=5.2.0
+cryptography>=42.0
+
+# 指纹生成（引擎运行时）
+browserforge>=1.0

@@ -1,0 +1,10 @@
+# FableTech 引擎运行时依赖（首次在设置页安装；浏览器二进制随后自动下载）
+# 主引擎：Camoufox（Firefox 定制构建，MPL-2.0）
+camoufox>=0.4
+playwright>=1.40
+
+# 备选引擎：Patchright（补丁版 Playwright，仅 Chromium，Apache-2.0）
+patchright>=1.50
+
+# 可选增强引擎：CloakBrowser（需 license key，运行时按需安装）
+# cloakbrowser>=0.1
