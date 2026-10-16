@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import customtkinter as ctk
 
+from .assets import LOGO_ROUNDED, asset_path, has_logo
 from .page_logs import LogsPage
 from .page_profiles import ProfilesPage
 from .page_proxies import ProxiesPage
@@ -30,14 +31,22 @@ class MainWindow(ctk.CTk):
         self.title("FableTech Browser v1.0")
         self.geometry(WINDOW_SIZE)
         self.minsize(980, 640)
+        self._set_window_icon()
 
         # 布局：侧边导航 | 内容
         self.sidebar = ctk.CTkFrame(self, width=180, corner_radius=0,
                                     fg_color=BG_PANEL)
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
+        # 品牌 Logo（圆角透明版，融入深色侧栏）
+        if has_logo():
+            import tkinter as _tk
+            self._logo_photo = _tk.PhotoImage(
+                file=str(asset_path(LOGO_ROUNDED)))
+            ctk.CTkLabel(self.sidebar, image=self._logo_photo,
+                         text="").pack(pady=(20, 6))
         ctk.CTkLabel(self.sidebar, text="FableTech", font=FONT_TITLE,
-                     text_color=TEXT_MAIN).pack(pady=(24, 4))
+                     text_color=TEXT_MAIN).pack(pady=(0, 4))
         ctk.CTkLabel(self.sidebar, text="自托管指纹浏览器",
                      font=FONT_SMALL, text_color=TEXT_MUTED).pack(pady=(0, 20))
 
@@ -69,6 +78,18 @@ class MainWindow(ctk.CTk):
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         self.show("profiles")
         self._refresh_status()
+
+    def _set_window_icon(self) -> None:
+        """设置窗口图标（任务栏/标题栏显示 FableTech Logo）。"""
+        if not has_logo():
+            return
+        try:
+            import tkinter as _tk
+            self._icon_photo = _tk.PhotoImage(
+                file=str(asset_path(LOGO_PNG)))
+            self.iconphoto(True, self._icon_photo)
+        except Exception:
+            pass  # 图标失败不影响主流程
 
     def show(self, key: str) -> None:
         for page in self.pages.values():

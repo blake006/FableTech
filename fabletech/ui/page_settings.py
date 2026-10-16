@@ -8,6 +8,7 @@ import customtkinter as ctk
 
 from ..core.engines import engine_status
 from ..core.selfcheck import run_selfcheck
+from .assets import LOGO_PNG, asset_path, has_logo
 from .widgets import PageFrame, show_error, show_info, show_warning
 
 ENGINE_CN = {"camoufox": "Camoufox（主引擎，免费）",
@@ -87,6 +88,16 @@ class SettingsPage(PageFrame):
         ctk.CTkLabel(about_card, text="关于 FableTech",
                      font=("Microsoft YaHei UI", 13, "bold")).pack(
             anchor="w", padx=16, pady=(12, 4))
+        # 品牌 Logo（关于页展示原图）
+        if has_logo():
+            import tkinter as _tk
+            self._about_logo = _tk.PhotoImage(
+                file=str(asset_path(LOGO_PNG)))
+            # 缩放到 96px 展示（tk PhotoImage 的 subsample）
+            scale = max(1, self._about_logo.width() // 96)
+            small = self._about_logo.subsample(scale, scale)
+            ctk.CTkLabel(about_card, image=small, text="").pack(
+                anchor="w", padx=16, pady=(4, 8))
         ctk.CTkLabel(about_card,
                      text="FableTech Browser v1.0 · 面向中国出海团队的免费自托管指纹浏览器\n"
                           "数据不出本机 · AES-256-GCM 加密 · 引擎可插拔",

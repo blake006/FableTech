@@ -51,7 +51,8 @@ README_PORTABLE = """FableTech Browser 1.0.0 — 便携版（win-x64）
   - 主密码丢失 = 数据不可恢复，请妥善保管。
 
 引擎运行时（首次启动时按需安装）
-  - Camoufox（主引擎）：首次启动档案时自动下载 Firefox 定制内核（约 200MB）；
+  - Camoufox（主引擎）：首次启动档案时自动下载 Firefox 定制内核（约 1.3GB，
+    一次性下载，受网络速度影响可能需 30 分钟以上）；
     也可手动执行：fabletech-cli.exe 所在环境的 python -m camoufox fetch
   - 详见 engines-runtime/README.txt
 
@@ -64,8 +65,9 @@ README_PORTABLE = """FableTech Browser 1.0.0 — 便携版（win-x64）
 RUNTIME_README = """引擎运行时安装说明
 ==================
 
-浏览器二进制（Firefox/Chromium，约 200MB）不预装在便携包内，
-首次启动对应引擎时自动下载（有中文进度提示）。
+浏览器二进制（Camoufox Firefox 定制内核，约 1.3GB）不预装在便携包内，
+首次启动对应引擎时自动下载（有中文进度提示）。下载受网络影响，
+可能需要 30 分钟以上，请耐心等待，勿中断。
 
 手动安装方式（在装有 Python 3.11+ 的机器上）：
   pip install camoufox patchright playwright
@@ -95,6 +97,9 @@ def build_exe(entry: str, name: str, windowed: bool) -> None:
         "--collect-all", "language_tags",
         "--collect-all", "patchright",
         "--collect-submodules", "playwright",
+        # UI 资产（Logo）与 exe 图标
+        "--add-data", f"{ROOT / 'fabletech' / 'ui' / 'assets'};fabletech/ui/assets",
+        "--icon", str(ROOT / "fabletech" / "ui" / "assets" / "logo.ico"),
     ]
     for h in HIDDEN_IMPORTS:
         args += ["--hidden-import", h]

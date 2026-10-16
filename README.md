@@ -1,6 +1,11 @@
 # FableTech Browser
 
-**面向中国出海团队的免费自托管指纹浏览器** —— 海外社媒账号注册 / 推广 / 维护 + Outlook 邮箱注册的一体化工具。
+<p align="center">
+  <img src="fabletech/ui/assets/logo.png" width="220" alt="FableTech Logo">
+</p>
+
+<p align="center"><b>面向中国出海团队的免费自托管指纹浏览器</b></p>
+<p align="center">海外社媒账号注册 / 推广 / 维护 + Outlook 邮箱注册的一体化工具</p>
 
 把 Multilogin / AdsPower 的档案管理体验，装进一个**完全免费、数据不出本机、引擎可插拔**的便携应用里。
 
@@ -61,6 +66,8 @@ python -m fabletech run-recipe --profile <id> --recipe outlook_register --params
 - [03 产品方案](docs/03-产品方案.md) —— 场景需求、功能清单、合规 SOP
 - [04 架构设计](docs/04-架构设计.md) —— 引擎抽象、数据模型、安全设计
 - [05 开发任务书](docs/05-开发任务书.md) —— 实现规格与红线
+- [06 使用/操作手册](docs/06-使用操作手册.md) —— 安装、档案、代理、Outlook 注册实操、FAQ
+- [07 维护手册](docs/07-维护手册.md) —— 备份恢复、引擎更新、故障排查、安全审计
 
 ## 技术栈
 
