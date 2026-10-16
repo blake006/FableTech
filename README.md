@@ -70,7 +70,7 @@ python -m fabletech run-recipe --profile <id> --recipe outlook_register --params
 - [07 维护手册](docs/07-维护手册.md) —— 备份恢复、引擎更新、故障排查、安全审计
 - [08 GeekezBrowser 调研与借鉴](docs/08-GeekezBrowser调研与借鉴.md) —— 同类产品分析、v1.1 借鉴路线
 
-**当前版本：v1.0.1**（v1.0.0 + GUI 启动修复 + Hysteria2/AnyTLS 支持 + 打包修复）
+**当前版本：v1.0.2**（+ 界面布局修复 + 机场协议族 vmess/vless/trojan/ss + WebRTC 硬屏蔽 + 动态水印 + 60+ 语言库）
 
 ## 技术栈
 

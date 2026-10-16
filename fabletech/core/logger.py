@@ -12,6 +12,7 @@ import re
 import sqlite3
 import sys
 import threading
+from typing import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -130,6 +131,35 @@ def get_logger() -> logging.Logger:
     return logger
 
 
+# ---------- 日志订阅（GUI 状态栏实时显示最近日志） ----------
+
+_sinks: list[Callable[[str, str, str], None]] = []
+_sinks_lock = threading.Lock()
+
+
+def add_log_sink(fn: Callable[[str, str, str], None]) -> None:
+    """注册日志订阅者：fn(level, source, message)。"""
+    with _sinks_lock:
+        if fn not in _sinks:
+            _sinks.append(fn)
+
+
+def remove_log_sink(fn: Callable[[str, str, str], None]) -> None:
+    with _sinks_lock:
+        if fn in _sinks:
+            _sinks.remove(fn)
+
+
+def _notify_sinks(level: str, source: str, message: str) -> None:
+    with _sinks_lock:
+        sinks = list(_sinks)
+    for fn in sinks:
+        try:
+            fn(level, source, message)
+        except Exception:
+            pass  # 订阅者异常不得影响主流程
+
+
 def log_event(level: str, source: str, message: str,
               profile_id: str | None = None,
               screenshot_path: str | None = None) -> None:
@@ -141,3 +171,4 @@ def log_event(level: str, source: str, message: str,
         extra={"source": source, "profile_id": profile_id,
                "screenshot_path": screenshot_path},
     )
+    _notify_sinks(level.upper(), source, sanitize(message))

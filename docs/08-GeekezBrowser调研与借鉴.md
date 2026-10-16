@@ -56,18 +56,19 @@
 
 **关键认知**：Geekez 证明了这个赛道「Electron + 代理内核 + 档案管理」形态的市场需求（1.1k star/半年），但它的指纹路线（JS 级）弱于 Camoufox（C++ 级）。FableTech 的组合（Camoufox + mihomo + Recipe 自动化）在检测对抗上更有优势。
 
-## 4. 值得借鉴的功能（v1.1 排期）
+## 4. 值得借鉴的功能（v1.0.2 已全部落地）
 
-| # | 功能 | 来源 | 实现路径 | 优先级 |
+| # | 功能 | 来源 | 实现路径 | 状态 |
 |---|---|---|---|---|
-| 1 | **语言库扩展 60+** | Geekez | `suggest_locale` 映射表从 12 国扩展到 60+ 语言/地区，批量导入代理时按出口国家推荐更细的 locale（en-GB/de-DE/fr-FR/ja-JP…） | P1 |
-| 2 | **动态水印** | Geekez | 档案启动时经 camoufox 注入脚本在页面顶部叠加半透明档案名（防多窗口误操作）——camoufox 支持 addons/init 脚本注入 | P1 |
-| 3 | **WebRTC 硬屏蔽开关** | Geekez | camoufox `launch_options(block_webrtc=...)` 档案级开关（默认开，极端场景可关） | P1 |
-| 4 | **mihomo 协议扩展** | Geekez(Xray) | relay.py 配置生成从 hy2/anytls 扩展到 VMess/VLESS/Trojan/SS（mihomo 原生支持，配置生成是同构工作）——覆盖机场订阅用户 | P1 |
-| 5 | **预代理链** | Geekez | mihomo `dialer-proxy`：档案代理前加一跳（隐藏真实 IP 的高级场景） | P2 |
-| 6 | 平台兼容矩阵 | Geekez | 使用手册补充各平台安全评级（同 §5） | P1 |
+| 1 | **语言库扩展 60+** | Geekez | `proxy.suggest_locale` 映射表扩展至 60+ 国家/地区（ja-JP/de-DE/pt-BR/ar-AE…） | ✅ v1.0.2 |
+| 2 | **动态水印** | Geekez | camoufox `add_init_script` 注入半透明档案名浮层（pointer-events:none，不拦截点击）；设置页可开关 | ✅ v1.0.2 |
+| 3 | **WebRTC 硬屏蔽** | Geekez | camoufox `launch_options(block_webrtc=True)`，设置页可开关 | ✅ v1.0.2 |
+| 4 | **mihomo 协议扩展** | Geekez(Xray) | `relay.build_config` 支持 hy2/anytls/vmess/vless(含 REALITY)/trojan/ss 全协议族 | ✅ v1.0.2 |
+| 5 | **预代理链** | Geekez | URI 加 `&dialer=<代理ID>` → mihomo `dialer-proxy` 两跳链路 | ✅ v1.0.2 |
+| 6 | 平台兼容矩阵 | Geekez | 使用手册 §13（含 FableTech 团队补充的通用铁律） | ✅ v1.0.2 |
 
-> 注：PolyForm Noncommercial 许可下**不复制任何代码**，以上均为独立实现的思路借鉴。
+> 注：PolyForm Noncommercial 许可下**未复制任何代码**，以上均为独立实现的思路借鉴。
+> 另有 2 项未纳入（优先级低）：扩展安装（Camoufox 对 Chrome 扩展支持有限）、多平台安装包（FableTech 聚焦 win-x64）。
 
 ## 5. 平台风控经验（双方共识，写入团队 SOP）
 

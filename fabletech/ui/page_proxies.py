@@ -11,13 +11,18 @@ import threading
 
 import customtkinter as ctk
 
-from ..core.proxy import parse_proxy_bulk, query_geo, suggest_locale
+from ..core.proxy import (
+    RELAY_TYPES, parse_proxy_bulk, query_geo, suggest_locale,
+)
 from ..core.proxy import test_proxy as run_proxy_test
 from .widgets import PageFrame, show_error, show_info, show_warning
 
 TYPE_CN = {"http": "HTTP", "https": "HTTPS", "socks5": "SOCKS5",
            "socks5h": "SOCKS5h", "socks4": "SOCKS4",
-           "hysteria2": "Hysteria2", "anytls": "AnyTLS"}
+           "hysteria2": "Hysteria2", "anytls": "AnyTLS",
+           "vmess": "VMess", "vless": "VLESS", "trojan": "Trojan",
+           "ss": "Shadowsocks"}
+
 
 # 单条新增表单提供的类型（hy2/anytls 请用批量导入粘贴完整 URI）
 ADD_TYPES = {"http": "HTTP", "https": "HTTPS", "socks5": "SOCKS5",
@@ -142,7 +147,10 @@ class ProxiesPage(PageFrame):
         ctk.CTkLabel(win, text="每行一条。支持：\n"
                      "  http/https/socks5://user:pass@host:port（或 host:port，默认 HTTP）\n"
                      "  hy2://auth@host:port/?sni=x&insecure=1&obfs=salamander&obfs-password=y\n"
-                     "  hysteria2://… / anytls://password@host:port?sni=x&insecure=1"
+                     "  hysteria2://… / anytls://password@host:port?sni=x&insecure=1\n"
+                     "  vmess://base64 / vless://uuid@host:port?security=reality…\n"
+                     "  trojan://password@host:port?sni=x / ss://base64@host:port\n"
+                     "  预代理链：任意协议 URI 加 &dialer=<代理ID>（前置一跳）"
                      ).pack(anchor="w", padx=16, pady=(12, 4))
         box = ctk.CTkTextbox(win, width=520, height=280)
         box.pack(padx=16, pady=8)
@@ -194,7 +202,7 @@ class ProxiesPage(PageFrame):
                         self.app.vault.decrypt_str(row["extra_enc"].hex()))
                 except Exception:
                     extra = None
-            if row["type"] in ("hysteria2", "anytls") or extra:
+            if row["type"] in RELAY_TYPES or extra:
                 # 中转型代理：启动本地中转 → 经中转实测 + 出口地理回填
                 p = ProxyInfo.from_extra(row["type"], row["host"],
                                          row["port"], username, password, extra)
@@ -236,7 +244,7 @@ class ProxiesPage(PageFrame):
             return
 
         def worker():
-            relay_type = row["type"] in ("hysteria2", "anytls")
+            relay_type = row["type"] in RELAY_TYPES
             geo = query_geo(row["host"])
             if geo.get("countryCode"):
                 self.app.storage.update_proxy(
@@ -244,7 +252,7 @@ class ProxiesPage(PageFrame):
                     city=geo.get("city", ""))
             note = ""
             if relay_type:
-                note = ("\n\n注意：Hysteria2/AnyTLS 显示的是服务器地理，"
+                note = ("\n\n注意：中转型代理显示的是服务器地理，"
                         "非出口地理。\n出口地理请用「连通测试」"
                         "（经本地中转实测并自动回填）。")
             self.after(0, lambda: show_info(

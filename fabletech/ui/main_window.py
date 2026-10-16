@@ -28,7 +28,7 @@ class MainWindow(ctk.CTk):
     def __init__(self, app) -> None:
         super().__init__()
         self.app = app
-        self.title("FableTech Browser v1.0.1")
+        self.title("FableTech Browser v1.0.2")
         self.geometry(WINDOW_SIZE)
         self.minsize(980, 640)
         self._set_window_icon()
@@ -39,10 +39,14 @@ class MainWindow(ctk.CTk):
         self.sidebar.pack(side="left", fill="y")
         self.sidebar.pack_propagate(False)
         # 品牌 Logo（圆角透明版，融入深色侧栏）
+        # 注意：tkinter.PhotoImage 按原始像素加载（800x800），必须手动
+        # 降采样，否则 800px 图片标签会撑爆 180px 侧栏布局
         if has_logo():
             import tkinter as _tk
             self._logo_photo = _tk.PhotoImage(
                 file=str(asset_path(LOGO_ROUNDED)))
+            scale = max(1, self._logo_photo.width() // 72)
+            self._logo_photo = self._logo_photo.subsample(scale, scale)
             ctk.CTkLabel(self.sidebar, image=self._logo_photo,
                          text="").pack(pady=(20, 6))
         ctk.CTkLabel(self.sidebar, text="FableTech", font=FONT_TITLE,
@@ -64,9 +68,23 @@ class MainWindow(ctk.CTk):
         self.content = ctk.CTkFrame(self, corner_radius=0, fg_color=BG_DARK)
         self.content.pack(side="right", fill="both", expand=True)
 
-        self.statusbar = ctk.CTkLabel(self, text="", anchor="w",
-                                      font=FONT_SMALL, text_color=TEXT_MUTED)
-        self.statusbar.pack(side="bottom", fill="x", padx=12, pady=4)
+        # 状态栏：左=实时日志（订阅 log_event），右=数据目录/运行中档案
+        status_frame = ctk.CTkFrame(self, height=26, corner_radius=0,
+                                    fg_color=BG_PANEL)
+        status_frame.pack(side="bottom", fill="x")
+        status_frame.pack_propagate(False)
+        self.log_label = ctk.CTkLabel(
+            status_frame, text="就绪", anchor="w", font=FONT_SMALL,
+            text_color=TEXT_MUTED)
+        self.log_label.pack(side="left", fill="x", expand=True, padx=(12, 8))
+        self.statusbar = ctk.CTkLabel(
+            status_frame, text="", anchor="e", font=FONT_SMALL,
+            text_color=TEXT_MUTED)
+        self.statusbar.pack(side="right", padx=(8, 12))
+        # 订阅应用日志 → 状态栏实时显示最近一条（线程安全经 after 派发）
+        from ..core.logger import add_log_sink, remove_log_sink
+        self._log_sink = self._on_log_event
+        add_log_sink(self._log_sink)
 
         self.pages: dict[str, ctk.CTkFrame] = {}
         for key, cls in (("profiles", ProfilesPage), ("proxies", ProxiesPage),
@@ -91,6 +109,18 @@ class MainWindow(ctk.CTk):
         except Exception:
             pass  # 图标失败不影响主流程
 
+    def _on_log_event(self, level: str, source: str, message: str) -> None:
+        """日志订阅回调（可能来自工作线程）→ 派发到 UI 线程更新状态栏。"""
+        icon = {"ERROR": "✗", "WARNING": "!", "INFO": "·"}.get(level, "·")
+        text = f"{icon} [{source}] {message}"
+        try:
+            self.after(0, lambda t=text: self.log_label.configure(text=t))
+        except Exception:
+            pass  # 窗口销毁中的日志忽略
+
+    def _set_log_text(self, text: str) -> None:
+        self.log_label.configure(text=text)
+
     def show(self, key: str) -> None:
         for page in self.pages.values():
             page.pack_forget()
@@ -108,5 +138,11 @@ class MainWindow(ctk.CTk):
             text=f"{self.app.data_dir_display()}　|　运行中档案：{len(running)}")
 
     def _on_close(self) -> None:
+        # 注销日志订阅（避免回调到已销毁控件）
+        try:
+            from ..core.logger import remove_log_sink
+            remove_log_sink(self._log_sink)
+        except Exception:
+            pass
         self.app.shutdown()
         self.destroy()

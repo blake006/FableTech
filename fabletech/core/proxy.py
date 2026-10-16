@@ -3,6 +3,7 @@
 支持协议：
   - http / https / socks5 / socks5h / socks4 —— 浏览器可直接使用
   - hy2 / hysteria2（Hysteria2，QUIC） / anytls（AnyTLS，TLS 混淆）
+  - vmess / vless / trojan / ss（机场订阅常见协议族，经 mihomo 中转）
     —— 浏览器不能直连，由 core/relay.py 通过 mihomo 本地中转为 SOCKS5
 
 红线：日志/UI 中代理 URL 必须掩码；密码只以加密形式落库。
@@ -10,6 +11,9 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
+import json as _json
 import socket
 import ssl
 from dataclasses import dataclass, field
@@ -21,13 +25,14 @@ from .logger import mask_credentials
 PROXY_TYPES = {"http", "https", "socks5", "socks5h", "socks4"}
 
 # 需要本地中转的协议（浏览器内核不直连这些传输层协议）
-RELAY_TYPES = {"hy2", "hysteria2", "anytls"}
+RELAY_TYPES = {"hy2", "hysteria2", "anytls",
+               "vmess", "vless", "trojan", "ss", "shadowsocks"}
 
 SUPPORTED_TYPES = PROXY_TYPES | RELAY_TYPES
 
-# hysteria2 别名归一化
+# 类型归一化（别名 → mihomo type 名）
 _HY2_ALIASES = {"hy2": "hysteria2", "hysteria2": "hysteria2",
-                "anytls": "anytls"}
+                "anytls": "anytls", "ss": "ss", "shadowsocks": "ss"}
 
 
 class ProxyParseError(ValueError):
@@ -126,13 +131,23 @@ def parse_proxy_line(line: str) -> ProxyInfo:
     scheme = (parts.scheme or "").lower()
     if scheme not in SUPPORTED_TYPES:
         raise ProxyParseError(f"不支持的协议类型: {scheme}")
+    rest_after_scheme = text.split("://", 1)[1] if "://" in text else text
+    # ss 整体 base64 形态（SIP002 旧式）与 vmess（base64 JSON 载荷）
+    # 都没有标准 host:port 结构，必须在通用校验前交给专用解析器
+    if scheme in ("ss", "shadowsocks") and "@" not in rest_after_scheme:
+        q = dict(parse_qsl(parts.query, keep_blank_values=True))
+        dialer = q.pop("dialer", None)
+        return _parse_ss(line, text, q, None, False, dialer)
+    if scheme == "vmess":
+        q = dict(parse_qsl(parts.query, keep_blank_values=True))
+        return _parse_vmess(line, text, q, None, False)
     if not parts.hostname or parts.port is None:
         raise ProxyParseError(f"缺少主机或端口: {line}")
     username = unquote(parts.username) if parts.username else None
     password = unquote(parts.password) if parts.password else None
 
     if scheme in RELAY_TYPES:
-        # hy2/anytls URI 的 userinfo 整体是 auth 串（无 user:pass 之分）；
+        # hy2/anytls URI 的 userinfo 整体是 auth（无 user:pass 之分）；
         # 仅有 userinfo 无冒号时归一化到 password
         if username and not password:
             password, username = username, None
@@ -142,13 +157,27 @@ def parse_proxy_line(line: str) -> ProxyInfo:
         insecure = _truthy(q.pop("insecure", None) or q.pop("allowInsecure", None))
         obfs = q.pop("obfs", None)
         obfs_password = q.pop("obfs-password", None) or q.pop("obfsParam", None)
+        # 预代理链：dialer=<代理ID>（引用代理池另一条代理作为前置）
+        dialer = q.pop("dialer", None)
+        norm = _HY2_ALIASES.get(scheme, scheme)
+
+        if scheme in ("vmess",):
+            return _parse_vmess(line, text, q, sni, insecure)
+        if scheme in ("vless", "trojan"):
+            return ProxyInfo(
+                type=norm, host=parts.hostname, port=parts.port,
+                username=username, password=password,
+                sni=sni, insecure=insecure, obfs=obfs,
+                obfs_password=obfs_password,
+                extra={**q, **({"dialer": dialer} if dialer else {})})
+        if scheme in ("ss", "shadowsocks"):
+            return _parse_ss(line, text, q, sni, insecure, dialer)
         return ProxyInfo(
-            type=_HY2_ALIASES.get(scheme, scheme),
-            host=parts.hostname, port=parts.port,
+            type=norm, host=parts.hostname, port=parts.port,
             username=username, password=password,
             sni=sni, insecure=insecure, obfs=obfs,
-            obfs_password=obfs_password, extra=q,
-        )
+            obfs_password=obfs_password,
+            extra={**q, **({"dialer": dialer} if dialer else {})})
 
     return ProxyInfo(type=scheme, host=parts.hostname, port=parts.port,
                      username=username, password=password)
@@ -159,6 +188,120 @@ def _truthy(value: str | None) -> bool:
     if value is None:
         return False
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+def _b64decode_json(text: str) -> dict:
+    """Base64 → JSON dict（vmess 标准形式；容忍缺 padding）。"""
+    t = text.strip().replace("-", "+").replace("_", "/")
+    t += "=" * (-len(t) % 4)
+    return _json.loads(base64.b64decode(t).decode("utf-8", errors="replace"))
+
+
+def _parse_vmess(line: str, text: str, q: dict,
+                 sni: str | None, insecure: bool) -> ProxyInfo:
+    """vmess://base64(json)：解析 v2rayN 标准 JSON 载荷。
+
+    字段：add(host) port id(uuid) aid(alterId) net(ws/tcp/grpc...)
+          type(none/http) host path tls sni ps(名称)
+    """
+    payload = text.split("://", 1)[1]
+    try:
+        d = _b64decode_json(payload)
+    except (ValueError, binascii.Error) as e:
+        raise ProxyParseError(f"vmess 载荷解析失败: {line}") from e
+    host = d.get("add") or ""
+    try:
+        port = int(d.get("port") or 0)
+    except (TypeError, ValueError):
+        port = 0
+    if not host or not port:
+        raise ProxyParseError(f"vmess 缺少主机或端口: {line}")
+    extra = {
+        "uuid": d.get("id") or "",
+        "alterId": d.get("aid") or "0",
+        "cipher": d.get("scy") or "auto",
+        "network": d.get("net") or "tcp",
+        "header_type": d.get("type") or "none",
+        "ws_host": d.get("host") or "",
+        "path": d.get("path") or "",
+    }
+    tls = (d.get("tls") or "").lower()
+    if tls and tls != "none":
+        extra["tls"] = True
+        if d.get("sni"):
+            sni = d["sni"]
+    if d.get("ps"):
+        extra["ps"] = d["ps"]
+    return ProxyInfo(
+        type="vmess", host=host, port=port,
+        username=None, password=d.get("id") or None,
+        sni=sni, insecure=insecure or _truthy(d.get("allowInsecure")),
+        extra=extra)
+
+
+def _parse_ss(line: str, text: str, q: dict, sni: str | None,
+              insecure: bool, dialer: str | None) -> ProxyInfo:
+    """ss:// 两种编码：
+    1) ss://base64(method:password)@host:port#name
+    2) ss://base64(method:password@host:port)#name（SIP002 旧式）
+    """
+    rest = text.split("://", 1)[1]
+    # 去掉 fragment（#name）
+    if "#" in rest:
+        rest, _, frag = rest.partition("#")
+        frag = unquote(frag)
+    else:
+        frag = ""
+    method = password = host = None
+    port = 0
+    if "@" in rest:
+        # 形式 1：base64(userinfo)@host:port
+        userinfo, _, hostport = rest.rpartition("@")
+        try:
+            decoded = base64.b64decode(
+                userinfo + "=" * (-len(userinfo) % 4)).decode("utf-8")
+        except (binascii.Error, ValueError) as e:
+            raise ProxyParseError(f"ss 载荷解析失败: {line}") from e
+        if ":" not in decoded:
+            raise ProxyParseError(f"ss 载荷缺少 method:password: {line}")
+        method, _, password = decoded.partition(":")
+        hp = hostport.split(":")
+        if len(hp) != 2:
+            raise ProxyParseError(f"ss 缺少端口: {line}")
+        host = hp[0]
+        try:
+            port = int(hp[1])
+        except ValueError as e:
+            raise ProxyParseError(f"ss 端口非法: {line}") from e
+    else:
+        # 形式 2：整体 base64(method:password@host:port)
+        try:
+            decoded = base64.b64decode(
+                rest + "=" * (-len(rest) % 4)).decode("utf-8")
+        except (binascii.Error, ValueError) as e:
+            raise ProxyParseError(f"ss 载荷解析失败: {line}") from e
+        if "@" not in decoded:
+            raise ProxyParseError(f"ss 载荷格式非法: {line}")
+        userinfo, _, hostport = decoded.rpartition("@")
+        if ":" not in userinfo:
+            raise ProxyParseError(f"ss 载荷缺少 method:password: {line}")
+        method, _, password = userinfo.partition(":")
+        hp = hostport.split(":")
+        if len(hp) != 2:
+            raise ProxyParseError(f"ss 缺少端口: {line}")
+        host = hp[0]
+        try:
+            port = int(hp[1])
+        except ValueError as e:
+            raise ProxyParseError(f"ss 端口非法: {line}") from e
+    extra = {"cipher": method or "aes-256-gcm"}
+    if frag:
+        extra["ps"] = frag
+    if dialer:
+        extra["dialer"] = dialer
+    return ProxyInfo(type="ss", host=host or "", port=port,
+                     username=None, password=password, sni=sni,
+                     insecure=insecure, extra=extra)
 
 
 def parse_proxy_bulk(text: str) -> tuple[list[ProxyInfo], list[tuple[int, str, str]]]:
@@ -340,10 +483,34 @@ def _default_geo_fetcher(ip: str, timeout: float) -> dict:
 
 
 def suggest_locale(country_code: str) -> str:
-    """国家码 → locale/时区建议（用于档案与代理地理对齐）。"""
+    """国家码 → locale 建议（用于档案与代理地理对齐）。
+
+    覆盖 60+ 国家/地区（借鉴 GeekezBrowser 的语言库广度）。
+    """
     mapping = {
+        # 英语区
         "US": "en-US", "GB": "en-GB", "CA": "en-CA", "AU": "en-AU",
-        "DE": "de-DE", "FR": "fr-FR", "JP": "ja-JP", "KR": "ko-KR",
-        "SG": "en-SG", "IN": "en-IN", "BR": "pt-BR", "CN": "zh-CN",
+        "NZ": "en-NZ", "IE": "en-IE", "ZA": "en-ZA", "SG": "en-SG",
+        "IN": "en-IN", "PH": "en-PH", "MY": "en-MY", "HK": "zh-HK",
+        # 欧洲
+        "DE": "de-DE", "AT": "de-AT", "CH": "de-CH", "FR": "fr-FR",
+        "BE": "nl-BE", "NL": "nl-NL", "IT": "it-IT", "ES": "es-ES",
+        "PT": "pt-PT", "PL": "pl-PL", "CZ": "cs-CZ", "SE": "sv-SE",
+        "NO": "nb-NO", "DK": "da-DK", "FI": "fi-FI", "GR": "el-GR",
+        "HU": "hu-HU", "RO": "ro-RO", "BG": "bg-BG", "HR": "hr-HR",
+        "SK": "sk-SK", "SI": "sl-SI", "RS": "sr-RS", "UA": "uk-UA",
+        "RU": "ru-RU", "TR": "tr-TR", "IS": "is-IS", "EE": "et-EE",
+        "LV": "lv-LV", "LT": "lt-LT",
+        # 亚太
+        "JP": "ja-JP", "KR": "ko-KR", "CN": "zh-CN", "TW": "zh-TW",
+        "TH": "th-TH", "VN": "vi-VN", "ID": "id-ID", "KH": "km-KH",
+        "MM": "my-MM", "BD": "bn-BD", "PK": "ur-PK", "LK": "si-LK",
+        "NP": "ne-NP", "KZ": "kk-KZ", "MN": "mn-MN",
+        # 美洲
+        "BR": "pt-BR", "MX": "es-MX", "AR": "es-AR", "CL": "es-CL",
+        "CO": "es-CO", "PE": "es-PE", "UY": "es-UY",
+        # 中东/非洲
+        "AE": "ar-AE", "SA": "ar-SA", "EG": "ar-EG", "IL": "he-IL",
+        "NG": "en-NG", "KE": "en-KE", "MA": "ar-MA", "GH": "en-GH",
     }
     return mapping.get((country_code or "").upper(), "en-US")

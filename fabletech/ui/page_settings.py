@@ -7,7 +7,6 @@ import threading
 import customtkinter as ctk
 
 from ..core.engines import engine_status
-from ..core.selfcheck import run_selfcheck
 from .assets import LOGO_PNG, asset_path, has_logo
 from .widgets import PageFrame, show_error, show_info, show_warning
 
@@ -68,6 +67,27 @@ class SettingsPage(PageFrame):
         ctk.CTkButton(btn_row, text="重新检测",
                       command=self._recheck_engines).pack(side="left", padx=4)
 
+        # 反检测增强（GeekezBrowser 借鉴）
+        adv_card = ctk.CTkFrame(self.body, fg_color="#2A2C33", corner_radius=10)
+        adv_card.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(adv_card, text="反检测增强",
+                     font=("Microsoft YaHei UI", 13, "bold")).pack(
+            anchor="w", padx=16, pady=(12, 4))
+        self.webrtc_var = ctk.StringVar(
+            value="1" if self.app.storage.get_setting("webrtc_block", "1") != "0"
+            else "0")
+        ctk.CTkCheckBox(
+            adv_card, text="WebRTC 硬屏蔽（阻断本地 IP 泄漏路径，建议开启）",
+            variable=self.webrtc_var, onvalue="1", offvalue="0",
+            command=self._save_adv_settings).pack(anchor="w", padx=16, pady=2)
+        self.watermark_var = ctk.StringVar(
+            value="1" if self.app.storage.get_setting("watermark", "1") != "0"
+            else "0")
+        ctk.CTkCheckBox(
+            adv_card, text="动态水印（页面右上角显示档案名，防多窗口误操作）",
+            variable=self.watermark_var, onvalue="1", offvalue="0",
+            command=self._save_adv_settings).pack(anchor="w", padx=16, pady=(2, 12))
+
         # CloakBrowser key
         cloak_card = ctk.CTkFrame(self.body, fg_color="#2A2C33", corner_radius=10)
         cloak_card.pack(fill="x", pady=(0, 10))
@@ -104,13 +124,25 @@ class SettingsPage(PageFrame):
                      justify="left").pack(anchor="w", padx=16, pady=(0, 8))
         ctk.CTkLabel(about_card, text=COMPLIANCE_TEXT, justify="left",
                      wraplength=880).pack(anchor="w", padx=16, pady=(0, 12))
-        self.selfcheck_lbl = ctk.CTkButton(
-            about_card, text="指纹自检（v1.1 规划）",
+        ctk.CTkButton(
+            about_card, text="指纹自检 → 请到「档案管理」页选中档案后点击",
             command=lambda: show_info(
-                self, "指纹自检", run_selfcheck()["message"]))
-        self.selfcheck_lbl.pack(anchor="w", padx=16, pady=(0, 14))
+                self, "指纹自检",
+                "指纹自检为档案级操作：\n\n"
+                "1. 打开「档案管理」页\n"
+                "2. 选中要检测的档案\n"
+                "3. 点击工具栏「指纹自检」\n\n"
+                "系统会启动该档案的浏览器，采集真实指纹数据并与档案配置"
+                "逐项比对（webdriver / UA / 时区 / 语言 / 屏幕 / WebGL / "
+                "CPU / 内存 / Canvas），同时访问 browserleaks 与 creepjs "
+                "并截图存档，输出评分报告。")).pack(anchor="w", padx=16, pady=(0, 14))
 
     # ---------- 操作 ----------
+
+    def _save_adv_settings(self) -> None:
+        """保存反检测增强开关（WebRTC 硬屏蔽 / 动态水印）。"""
+        self.app.storage.set_setting("webrtc_block", self.webrtc_var.get())
+        self.app.storage.set_setting("watermark", self.watermark_var.get())
 
     def _install_runtime(self) -> None:
         engines = {name: eng for name, eng in

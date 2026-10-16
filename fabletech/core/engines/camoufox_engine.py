@@ -9,6 +9,7 @@ AsyncCamoufox(**kwargs) → persistent_context=True 时返回持久化 BrowserCo
 from __future__ import annotations
 
 import asyncio
+import json as _json
 import subprocess
 import sys
 from pathlib import Path
@@ -19,6 +20,27 @@ from .base import BrowserEngine, EngineSession, LaunchSpec, _run_loop_in_thread
 
 class EngineUnavailableError(RuntimeError):
     """引擎不可用（依赖缺失/浏览器未安装）。"""
+
+
+def _watermark_js(profile_name: str) -> str:
+    """动态水印脚本（add_init_script 注入）：档案名浮于页面顶部。
+
+    半透明、可拖动避让、不拦截点击（pointer-events: none）。
+    """
+    safe = _json.dumps(profile_name, ensure_ascii=False)
+    return (
+        "(function(){"
+        "if(document.getElementById('__fabletech_wm__'))return;"
+        "var d=document.createElement('div');"
+        "d.id='__fabletech_wm__';"
+        "d.textContent='FableTech · '+(" + safe + ");"
+        "d.style.cssText='position:fixed;top:8px;right:8px;z-index:2147483647;"
+        "padding:4px 10px;border-radius:6px;background:rgba(30,31,36,.72);"
+        "color:#E8E9EC;font:12px/1.4 \"Microsoft YaHei UI\",sans-serif;"
+        "pointer-events:none;user-select:none;';"
+        "document.documentElement.appendChild(d);"
+        "})();"
+    )
 
 
 class CamoufoxEngine(BrowserEngine):
@@ -105,6 +127,9 @@ class CamoufoxEngine(BrowserEngine):
             options["geoip"] = True
         if spec.extra.get("block_images"):
             options["block_images"] = True
+        # WebRTC 硬屏蔽（GeekezBrowser 借鉴：物理阻断本地 IP 泄漏路径，
+        # disable_non_proxied_udp 策略）。默认开，可经设置关闭。
+        options["block_webrtc"] = spec.extra.get("webrtc_block", True)
 
         loop = _run_loop_in_thread()
 
@@ -118,6 +143,11 @@ class CamoufoxEngine(BrowserEngine):
                     await cm.__aexit__(None, None, None)
                 finally:
                     raise
+            # 动态水印（GeekezBrowser 借鉴）：档案名浮于页面顶部，
+            # 多窗口并行时防误操作。经 add_init_script 注入。
+            wm_name = spec.extra.get("profile_name")
+            if wm_name and spec.extra.get("watermark", True):
+                await ctx.add_init_script(_watermark_js(wm_name))
             page = await ctx.new_page()
             return ctx, page, cm
 

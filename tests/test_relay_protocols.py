@@ -8,7 +8,7 @@
 - SOCKS5 最小客户端（mock socket）
 """
 
-import json
+import json as _json
 
 import pytest
 
@@ -18,6 +18,7 @@ from fabletech.core.proxy import (
     parse_proxy_bulk,
     parse_proxy_line,
     socks5_http_get,
+    suggest_locale,
 )
 from fabletech.core.relay import build_config
 
@@ -95,7 +96,7 @@ def test_extra_dict_roundtrip():
     assert d["obfs_password"] == "xyz"
     # 序列化 → 反序列化往返
     p2 = ProxyInfo.from_extra("hysteria2", "h.com", 443, None, "mypw",
-                              json.loads(json.dumps(d)))
+                              _json.loads(_json.dumps(d)))
     assert p2.sni == "r.com"
     assert p2.insecure is True
     assert p2.obfs == "salamander"
@@ -210,3 +211,144 @@ def test_socks5_http_get(monkeypatch):
     assert fake.sent[3:6] == b"\x05\x01\x00"
     assert fake.sent[6] == 0x03
     assert b"api.example" in fake.sent
+
+
+# ---------- 机场协议族（vmess/vless/trojan/ss） ----------
+
+import base64 as _b64
+
+
+def test_parse_vmess_standard():
+    # v2rayN 标准 vmess 链接：base64(json)
+    payload = _b64.b64encode(_json.dumps({
+        "v": "2", "ps": "测试节点", "add": "vm.example.com", "port": "443",
+        "id": "b831381d-6324-4d53-ad4f-8cda48b30811", "aid": "0",
+        "scy": "auto", "net": "ws", "type": "none", "host": "cdn.example.com",
+        "path": "/ray", "tls": "tls", "sni": "vm.example.com",
+    }, ensure_ascii=False).encode()).decode()
+    p = parse_proxy_line(f"vmess://{payload}")
+    assert p.type == "vmess"
+    assert p.host == "vm.example.com" and p.port == 443
+    assert p.password == "b831381d-6324-4d53-ad4f-8cda48b30811"
+    assert p.extra["network"] == "ws"
+    assert p.extra["path"] == "/ray"
+    assert p.extra["ws_host"] == "cdn.example.com"
+    assert p.extra["tls"] is True
+    assert p.sni == "vm.example.com"
+
+
+def test_parse_vmess_bad_payload():
+    with pytest.raises(ProxyParseError):
+        parse_proxy_line("vmess://not-valid-base64!!!")
+
+
+def test_parse_vless_reality():
+    p = parse_proxy_line(
+        "vless://uuid-here@vl.example.com:443?encryption=none&security=reality"
+        "&sni=www.microsoft.com&fp=chrome&pbk=PubKey123&sid=ab12&type=tcp#节点1")
+    assert p.type == "vless"
+    assert p.host == "vl.example.com" and p.port == 443
+    assert p.password == "uuid-here"
+    assert p.sni == "www.microsoft.com"
+    assert p.extra["security"] == "reality"
+    assert p.extra["pbk"] == "PubKey123"
+    assert p.extra["fp"] == "chrome"
+
+
+def test_parse_trojan():
+    p = parse_proxy_line(
+        "trojan://pass123@tj.example.com:8443?sni=tj.example.com&type=ws"
+        "&path=/tr&host=tj.example.com")
+    assert p.type == "trojan"
+    assert p.password == "pass123"
+    assert p.sni == "tj.example.com"
+    assert p.extra["type"] == "ws"
+    assert p.extra["path"] == "/tr"
+
+
+def test_parse_ss_form1():
+    userinfo = _b64.b64encode(b"aes-256-gcm:mypassword").decode()
+    p = parse_proxy_line(f"ss://{userinfo}@ss.example.com:8388#节点A")
+    assert p.type == "ss"
+    assert p.host == "ss.example.com" and p.port == 8388
+    assert p.password == "mypassword"
+    assert p.extra["cipher"] == "aes-256-gcm"
+    assert p.extra["ps"] == "节点A"
+
+
+def test_parse_ss_form2():
+    whole = _b64.b64encode(b"chacha20-ietf-poly1305:pw2@ss2.example.com:9443").decode()
+    p = parse_proxy_line(f"ss://{whole}")
+    assert p.type == "ss"
+    assert p.host == "ss2.example.com" and p.port == 9443
+    assert p.password == "pw2"
+    assert p.extra["cipher"] == "chacha20-ietf-poly1305"
+
+
+def test_dialer_param():
+    p = parse_proxy_line("hy2://pw@h.com:443?dialer=abc123")
+    assert p.extra.get("dialer") == "abc123"
+    p2 = parse_proxy_line("ss://" + _b64.b64encode(b"aes-256-gcm:pw@h.com:1").decode()
+                          + "?dialer=xyz")
+    assert p2.extra.get("dialer") == "xyz"
+
+
+# ---------- mihomo 配置：新协议 ----------
+
+def test_build_config_vmess():
+    payload = _b64.b64encode(_json.dumps({
+        "add": "vm.com", "port": "443", "id": "uuid-1", "aid": "0",
+        "net": "ws", "path": "/ray", "host": "cdn.com", "tls": "tls",
+    }).encode()).decode()
+    p = parse_proxy_line(f"vmess://{payload}")
+    cfg = build_config(p, 7890)
+    assert 'type: "vmess"' in cfg
+    assert "uuid-1" in cfg
+    assert "/ray" in cfg
+    assert "cdn.com" in cfg
+
+
+def test_build_config_vless_reality():
+    p = parse_proxy_line(
+        "vless://uuid-1@vl.com:443?security=reality&sni=www.apple.com"
+        "&fp=chrome&pbk=KEY1&sid=ab&type=tcp")
+    cfg = build_config(p, 7890)
+    assert 'type: "vless"' in cfg
+    assert "reality-opts" in cfg
+    assert "KEY1" in cfg
+    assert "www.apple.com" in cfg
+
+
+def test_build_config_trojan_and_ss():
+    p1 = parse_proxy_line("trojan://pw@tj.com:443?sni=tj.com&insecure=1")
+    cfg1 = build_config(p1, 7890)
+    assert 'type: "trojan"' in cfg1
+    assert "skip-cert-verify" in cfg1
+    p2 = parse_proxy_line("ss://" + _b64.b64encode(b"aes-256-gcm:pw@ss.com:80").decode())
+    cfg2 = build_config(p2, 7891)
+    assert 'type: "ss"' in cfg2
+    assert "aes-256-gcm" in cfg2
+
+
+def test_build_config_dialer_chain():
+    """预代理链：dialer 出站 + dialer-proxy 引用。"""
+    upstream = parse_proxy_line("hy2://pw@h.com:443?sni=r.com")
+    dialer = parse_proxy_line(
+        "ss://" + _b64.b64encode(b"aes-256-gcm:dp@d.com:80").decode())
+    cfg = build_config(upstream, 7890, dialer=dialer)
+    assert "dialer-proxy" in cfg
+    assert 'name: "dialer"' in cfg
+    assert 'name: "upstream"' in cfg
+    assert "d.com" in cfg and "h.com" in cfg
+
+
+# ---------- 语言库 ----------
+
+def test_suggest_locale_extended():
+    assert suggest_locale("JP") == "ja-JP"
+    assert suggest_locale("DE") == "de-DE"
+    assert suggest_locale("BR") == "pt-BR"
+    assert suggest_locale("TH") == "th-TH"
+    assert suggest_locale("AE") == "ar-AE"
+    assert suggest_locale("XX") == "en-US"   # 未知回退
+    assert suggest_locale("") == "en-US"

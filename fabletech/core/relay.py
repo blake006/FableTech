@@ -105,15 +105,57 @@ def _y(s: str) -> str:
     return json.dumps(s, ensure_ascii=False)
 
 
-def build_config(proxy: ProxyInfo, port: int) -> str:
+def build_config(proxy: ProxyInfo, port: int,
+                 dialer: ProxyInfo | None = None) -> str:
     """生成 mihomo 配置：单个上游 + mixed 监听 + 全局模式。
 
-    hy2   → type: hysteria2（password 为 auth 串，alpn: h3）
-    anytls → type: anytls（password 为连接密码）
+    支持 hysteria2 / anytls / vmess / vless / trojan / ss。
+    dialer：预代理（proxy chain，本地 → 预代理 → 上游 → 目标）。
     """
+    out = _upstream_outbound(proxy)
+    if not out:
+        raise RelayError(f"不支持的协议类型: {proxy.type}")
+
+    lines = [
+        f"mixed-port: {port}",
+        "allow-lan: false",
+        "bind-address: 127.0.0.1",
+        "mode: global",
+        "log-level: error",
+        "ipv6: false",
+        "geodata-mode: false",
+        "geo-auto-update: false",
+        "external-controller: ",
+        "proxies:",
+    ]
+    if dialer is not None:
+        dialer_out = _upstream_outbound(dialer, name="dialer")
+        if not dialer_out:
+            raise RelayError(f"预代理协议不支持: {dialer.type}")
+        lines.append(_flow_entry(dialer_out))
+        out["dialer-proxy"] = "dialer"
+    lines.append(_flow_entry(out))
+    lines += [
+        "proxy-groups: []",
+        "rules:",
+        "  - MATCH,upstream",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def _flow_entry(out: dict) -> str:
+    """outbound dict → YAML flow 映射条目。"""
+    fields = ",\n    ".join(
+        f"{k}: {_y(v) if isinstance(v, str) else v}" for k, v in out.items())
+    return f"  - {{\n    {fields}\n  }}"
+
+
+def _upstream_outbound(proxy: ProxyInfo, name: str = "upstream") -> dict | None:
+    """按协议生成 mihomo 出站配置；不支持的类型返回 None。"""
+    ex = proxy.extra or {}
     if proxy.type == "hysteria2":
         out = {
-            "name": "upstream",
+            "name": name,
             "type": "hysteria2",
             "server": proxy.host,
             "port": proxy.port,
@@ -127,13 +169,12 @@ def build_config(proxy: ProxyInfo, port: int) -> str:
             out["obfs"] = proxy.obfs
             if proxy.obfs_password:
                 out["obfs-password"] = proxy.obfs_password
-        out["alpn"] = ["h3"]
-        extra = proxy.extra.get("alpn")
-        if isinstance(extra, list) and extra:
-            out["alpn"] = [str(x) for x in extra]
-    elif proxy.type == "anytls":
+        alpn = ex.get("alpn")
+        out["alpn"] = [str(x) for x in alpn] if isinstance(alpn, list) and alpn else ["h3"]
+        return out
+    if proxy.type == "anytls":
         out = {
-            "name": "upstream",
+            "name": name,
             "type": "anytls",
             "server": proxy.host,
             "port": proxy.port,
@@ -143,27 +184,108 @@ def build_config(proxy: ProxyInfo, port: int) -> str:
             out["sni"] = proxy.sni
         if proxy.insecure:
             out["skip-cert-verify"] = True
-    else:
-        raise RelayError(f"不支持的协议类型: {proxy.type}")
-
-    fields = ",\n    ".join(
-        f"{k}: {_y(v) if isinstance(v, str) else v}" for k, v in out.items())
-    return (
-        f"mixed-port: {port}\n"
-        f"allow-lan: false\n"
-        f"bind-address: 127.0.0.1\n"
-        f"mode: global\n"
-        f"log-level: error\n"
-        f"ipv6: false\n"
-        f"geodata-mode: false\n"
-        f"geo-auto-update: false\n"
-        f"external-controller: \n"
-        f"proxies:\n"
-        f"  - {{\n    {fields}\n  }}\n"
-        f"proxy-groups: []\n"
-        f"rules:\n"
-        f"  - MATCH,upstream\n"
-    )
+        return out
+    if proxy.type == "vmess":
+        network = ex.get("network") or "tcp"
+        out = {
+            "name": name,
+            "type": "vmess",
+            "server": proxy.host,
+            "port": proxy.port,
+            "uuid": ex.get("uuid") or proxy.password or "",
+            "alterId": int(ex.get("alterId") or 0),
+            "cipher": ex.get("cipher") or "auto",
+        }
+        if network in ("ws", "http", "h2", "grpc"):
+            out["network"] = network
+            ws_opts: dict = {}
+            if ex.get("path"):
+                ws_opts["path"] = ex["path"]
+            if ex.get("ws_host"):
+                ws_opts["headers"] = {"Host": ex["ws_host"]}
+            if ws_opts:
+                out["ws-opts"] = ws_opts
+            if network == "grpc" and ex.get("path"):
+                out["grpc-opts"] = {"grpc-service-name": ex["path"]}
+        if ex.get("tls"):
+            out["tls"] = True
+            if proxy.sni or ex.get("ws_host"):
+                out["servername"] = proxy.sni or ex.get("ws_host")
+            if proxy.insecure:
+                out["skip-cert-verify"] = True
+        return out
+    if proxy.type == "vless":
+        security = (ex.get("security") or "").lower()
+        out = {
+            "name": name,
+            "type": "vless",
+            "server": proxy.host,
+            "port": proxy.port,
+            "uuid": proxy.password or proxy.username or "",
+        }
+        network = ex.get("type") or "tcp"
+        if network != "tcp":
+            out["network"] = network
+            ws_opts = {}
+            if ex.get("path"):
+                ws_opts["path"] = ex["path"]
+            if ex.get("host"):
+                ws_opts["headers"] = {"Host": ex["host"]}
+            if ws_opts:
+                out["ws-opts"] = ws_opts
+        if security in ("tls", "reality", "xtls"):
+            out["tls"] = True
+            if proxy.sni or ex.get("sni"):
+                out["servername"] = proxy.sni or ex.get("sni")
+            if proxy.insecure:
+                out["skip-cert-verify"] = True
+            if security == "reality":
+                reality: dict = {}
+                if ex.get("pbk"):
+                    reality["public-key"] = ex["pbk"]
+                if ex.get("sid"):
+                    reality["short-id"] = ex["sid"]
+                if ex.get("fp"):
+                    out["client-fingerprint"] = ex["fp"]
+                if reality:
+                    out["reality-opts"] = reality
+        flow = ex.get("flow")
+        if flow:
+            out["flow"] = flow
+        return out
+    if proxy.type == "trojan":
+        network = ex.get("type") or "tcp"
+        out = {
+            "name": name,
+            "type": "trojan",
+            "server": proxy.host,
+            "port": proxy.port,
+            "password": proxy.password or proxy.username or "",
+        }
+        if proxy.sni or ex.get("sni"):
+            out["sni"] = proxy.sni or ex.get("sni")
+        if proxy.insecure:
+            out["skip-cert-verify"] = True
+        if network == "ws":
+            out["network"] = "ws"
+            ws_opts = {}
+            if ex.get("path"):
+                ws_opts["path"] = ex["path"]
+            if ex.get("host"):
+                ws_opts["headers"] = {"Host": ex["host"]}
+            if ws_opts:
+                out["ws-opts"] = ws_opts
+        return out
+    if proxy.type == "ss":
+        return {
+            "name": name,
+            "type": "ss",
+            "server": proxy.host,
+            "port": proxy.port,
+            "cipher": ex.get("cipher") or "aes-256-gcm",
+            "password": proxy.password or "",
+        }
+    return None
 
 
 def _free_port() -> int:
@@ -202,10 +324,12 @@ class RelayManager:
         self._relays: dict[str, _Relay] = {}
         self._lock = threading.Lock()
 
-    def endpoint_for(self, proxy_id: str, proxy: ProxyInfo) -> tuple[str, int]:
+    def endpoint_for(self, proxy_id: str, proxy: ProxyInfo,
+                     dialer: ProxyInfo | None = None) -> tuple[str, int]:
         """确保该代理的本地中转已启动，返回 (127.0.0.1, port)。
 
         同一 proxy_id 重复调用复用同一中转（引用计数 +1）。
+        dialer：预代理（proxy chain，本地 → 预代理 → 上游）。
         """
         with self._lock:
             r = self._relays.get(proxy_id)
@@ -222,7 +346,8 @@ class RelayManager:
         relay_dir.mkdir(parents=True, exist_ok=True)
         config_path = relay_dir / f"{proxy_id}.yaml"
         log_path = relay_dir / f"{proxy_id}.log"
-        config_path.write_text(build_config(proxy, port), encoding="utf-8")
+        config_path.write_text(build_config(proxy, port, dialer=dialer),
+                               encoding="utf-8")
         log_file = open(log_path, "ab")
         try:
             proc = subprocess.Popen(

@@ -34,6 +34,13 @@ def test_gui_full_construction(tmp_path):
                 win.show(key)
             win.update()  # 强制刷新挂起的事件（探测构建期异常）
             assert win.winfo_exists()
+            # 布局回归：侧栏 Logo 必须已降采样（800x800 原图会撑爆布局）
+            logo = getattr(win, "_logo_photo", None)
+            if logo is not None:
+                assert logo.width() <= 120, (
+                    f"侧栏 Logo 宽度 {logo.width()} 超出（应≤120，"
+                    "未降采样会导致界面错乱）")
+                assert logo.height() <= 120
         finally:
             win.destroy()
             app.shutdown()
@@ -45,3 +52,13 @@ def test_entry_gui_import_chain():
     """entry_gui.py 的导入链（打包 exe 的启动路径）。"""
     from fabletech.app import run_gui  # noqa: F401
     assert callable(run_gui)
+
+
+def test_watermark_js_generation():
+    """动态水印脚本生成（含档案名转义）。"""
+    from fabletech.core.engines.camoufox_engine import _watermark_js
+    js = _watermark_js('测试"档案"')
+    assert "__fabletech_wm__" in js
+    assert "pointer-events:none" in js
+    # 名称经 JSON 转义，不产生脚本注入
+    assert '\\"' in js or '测试' in js

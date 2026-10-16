@@ -185,6 +185,25 @@ def _relay_test_cli(key: str, proxy) -> None:
     relay_manager().release(key)
 
 
+def cmd_selfcheck(args) -> int:
+    """指纹自检：启动档案浏览器采集实况 + 检测站点评分。"""
+    _, vault, profiles = _unlock(args)
+    from .core.fingerprint import engine_config, generate_fingerprint
+    from .core.selfcheck import format_report, run_selfcheck
+    try:
+        profile = profiles.get(args.profile_id)
+    except KeyError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    fp = generate_fingerprint(profile["seed"])
+    cfg = engine_config(fp, profile["engine"])
+    headless = not getattr(args, "headed", False)
+    report = run_selfcheck(args.profile_id, profiles, fp, cfg,
+                           headless=headless)
+    print(format_report(report))
+    return 0 if report.get("ok") else 2
+
+
 def cmd_proxy_test(args) -> int:
     if args.url:
         ok_list, bad = parse_proxy_bulk(args.url)
@@ -296,6 +315,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--proxy-id", help="库中代理 ID")
     sp.set_defaults(func=cmd_proxy_test)
 
+    sp = sub.add_parser("selfcheck", help="指纹自检（采集实况+检测站点截图）")
+    sp.add_argument("profile_id", help="档案 ID")
+    sp.add_argument("--headed", action="store_true",
+                    help="有头模式自检（默认无头）")
+    sp.set_defaults(func=cmd_selfcheck)
     sp = sub.add_parser("engines", help="检测引擎可用性")
     sp.set_defaults(func=cmd_engines)
 

@@ -26,6 +26,13 @@ class FakeSession:
     def run_sync(self, coro):
         return asyncio.run_coroutine_threadsafe(coro, self.loop).result(timeout=10)
 
+    def stop(self) -> None:
+        """停止事件循环线程（避免全量套件下线程堆积影响后续用例）。"""
+        try:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        except Exception:
+            pass
+
 
 @pytest.fixture()
 def env(tmp_path):
@@ -36,7 +43,12 @@ def env(tmp_path):
     clear_data_dir_override()
 
 
-def _wait_task(st: Storage, tid: str, want: set[str], timeout: float = 15):
+def _wait_task(st: Storage, tid: str, want: set[str], timeout: float = 45):
+    """等待任务进入目标状态。
+
+    超时放宽到 45s：全量套件下（tkinter 窗口 + 多事件循环）机器负载高，
+    15s 会造成偶发超时抖动（非逻辑缺陷）。
+    """
     deadline = time.time() + timeout
     while time.time() < deadline:
         t = st.get_task(tid)

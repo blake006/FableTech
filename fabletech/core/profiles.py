@@ -104,7 +104,8 @@ class ProfileService:
         """把档案代理转换为引擎可用的连接目标。
 
         - http/socks5：直连
-        - hy2/hysteria2/anytls：经 mihomo 本地中转 → socks5://127.0.0.1:port
+        - hy2/hysteria2/anytls/vmess/vless/trojan/ss：经 mihomo 本地中转
+          → socks5://127.0.0.1:port（支持预代理链 dialer）
         返回 (引擎用代理, 中转 proxy_id[需要释放时])
         """
         if not proxy.is_relay:
@@ -112,11 +113,17 @@ class ProfileService:
         pid = profile.get("proxy_id")
         if not pid:
             return proxy, None
-        host, port = relay_manager().endpoint_for(pid, proxy)
+        # 预代理链：extra.dialer 引用代理池另一条代理
+        dialer = None
+        dialer_id = (proxy.extra or {}).get("dialer")
+        if dialer_id:
+            dialer = self.resolve_proxy({"proxy_id": dialer_id})
+        host, port = relay_manager().endpoint_for(pid, proxy, dialer=dialer)
         local = ProxyInfo(type="socks5", host=host, port=port,
                           username=None, password=None)
+        chain = f"（经预代理 {dialer_id}）" if dialer else ""
         log_event("INFO", "relay",
-                  f"档案代理经本地中转接入：{proxy.masked_url()} → "
+                  f"档案代理经本地中转接入{chain}：{proxy.masked_url()} → "
                   f"socks5://{host}:{port}")
         return local, pid
 
@@ -148,17 +155,25 @@ class ProfileService:
             from .proxy import suggest_locale
             cfg["locale"] = suggest_locale(geo["country"])
 
-        # hy2/anytls → mihomo 本地中转；引擎始终拿到 http/socks5
+        # hy2/anytls/vmess/vless/trojan/ss → mihomo 本地中转；引擎始终拿到 http/socks5
         engine_proxy, relay_pid = (None, None)
         if proxy is not None:
             engine_proxy, relay_pid = self._engine_proxy(profile, proxy)
 
         from .engines.base import LaunchSpec
+        # 全局开关（设置页可调）：WebRTC 硬屏蔽 / 动态水印，默认开
+        webrtc_block = self.st.get_setting("webrtc_block", "1") != "0"
+        watermark = self.st.get_setting("watermark", "1") != "0"
         spec = LaunchSpec(
             profile_id=profile_id,
             user_data_dir=profile_user_data_dir(profile_id),
             proxy=engine_proxy, fingerprint=fp, engine_cfg=cfg,
             headless=headless,
+            extra={
+                "profile_name": profile.get("name", ""),
+                "webrtc_block": webrtc_block,
+                "watermark": watermark,
+            },
         )
         try:
             session = engine.launch(spec)

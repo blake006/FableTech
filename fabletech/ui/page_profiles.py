@@ -31,6 +31,9 @@ class ProfilesPage(PageFrame):
                       command=self._close).pack(side="left", padx=4)
         ctk.CTkButton(bar, text="保存登录态", width=110,
                       command=self._save_state).pack(side="left", padx=4)
+        ctk.CTkButton(bar, text="指纹自检", width=90,
+                      fg_color="#46A758", hover_color="#3A8C4A",
+                      command=self._selfcheck).pack(side="left", padx=4)
         ctk.CTkButton(bar, text="删除", width=80, fg_color="#E5484D",
                       hover_color="#C93A3F",
                       command=self._delete).pack(side="left", padx=4)
@@ -135,6 +138,34 @@ class ProfilesPage(PageFrame):
 
         ctk.CTkButton(win, text="创建", fg_color="#4F6BED",
                       command=_ok).pack(pady=10)
+
+    def _selfcheck(self) -> None:
+        """指纹自检：启动档案浏览器采集指纹实况 + 检测站点评分。"""
+        pid = self._selected()
+        if not pid:
+            show_warning(self, "提示", "请先在列表中选择一个档案")
+            return
+        if self.app.profiles.is_running(pid):
+            show_warning(self, "提示", "该档案正在运行中，请先关闭再自检")
+            return
+        self.status_lbl.configure(text="正在自检（启动浏览器采集指纹）…")
+
+        def worker():
+            from ..core.fingerprint import engine_config, generate_fingerprint
+            from ..core.selfcheck import format_report, run_selfcheck
+            try:
+                profile = self.app.profiles.get(pid)
+                fp = generate_fingerprint(profile["seed"])
+                cfg = engine_config(fp, profile["engine"])
+                report = run_selfcheck(pid, self.app.profiles, fp, cfg,
+                                       headless=True)
+                text = format_report(report)
+            except Exception as e:
+                text = f"自检异常：{e}"
+            self.after(0, lambda t=text: (self.status_lbl.configure(text="就绪"),
+                                          show_info(self, "指纹自检报告", t)))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _launch(self) -> None:
         pid = self._selected()
