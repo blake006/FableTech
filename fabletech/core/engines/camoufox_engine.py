@@ -61,31 +61,51 @@ class CamoufoxEngine(BrowserEngine):
         return True, ""
 
     def ensure_runtime(self) -> bool:
-        """pip 安装 camoufox（若缺）+ camoufox fetch 下载浏览器。"""
-        if not self.available()[0]:
-            try:
-                import camoufox  # noqa: F401
-            except ImportError:
-                log_event("INFO", "engine.camoufox",
-                          "正在安装 camoufox 包…")
-                proc = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "camoufox"],
-                    capture_output=True, text=True, timeout=600,
-                )
-                if proc.returncode != 0:
-                    log_event("ERROR", "engine.camoufox",
-                              f"camoufox 安装失败：{proc.stderr[-300:]}")
-                    return False
-        proc = subprocess.run(
-            [sys.executable, "-m", "camoufox", "fetch"],
-            capture_output=True, text=True, timeout=1800,
-        )
-        if proc.returncode != 0:
+        """确保 camoufox 包与浏览器内核可用。
+
+        关键：浏览器下载必须**进程内**调用 CamoufoxFetcher.install()。
+        冻结环境（便携包）下 sys.executable 是 FableTech.exe，
+        执行 [sys.executable, "-m", "camoufox", "fetch"] 只会再启动
+        一个 GUI，下载永远不会发生（v1.0.2 实际故障）。
+        """
+        ok, _ = self.available()
+        if ok:
+            return True
+        # 1) 包缺失：非冻结环境用 pip 补装；冻结包已内置，走到这里说明环境异常
+        try:
+            import camoufox  # noqa: F401
+        except ImportError:
+            if getattr(sys, "frozen", False):
+                log_event("ERROR", "engine.camoufox",
+                          "便携包内 camoufox 包缺失（环境异常），"
+                          "请重新下载完整便携包")
+                return False
+            log_event("INFO", "engine.camoufox", "正在安装 camoufox 包…")
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "camoufox"],
+                capture_output=True, text=True, timeout=600,
+            )
+            if proc.returncode != 0:
+                log_event("ERROR", "engine.camoufox",
+                          f"camoufox 安装失败：{proc.stderr[-300:]}")
+                return False
+
+        # 2) 下载浏览器内核（进程内，约 1.3GB）
+        log_event("INFO", "engine.camoufox",
+                  "开始下载 camoufox 浏览器内核（约 1.3GB，"
+                  "受网络影响可能需要 30 分钟以上，请勿关闭应用）…")
+        try:
+            from camoufox.pkgman import CamoufoxFetcher, installed_verstr
+            CamoufoxFetcher().install()
+            ver = installed_verstr()
+            log_event("INFO", "engine.camoufox",
+                      f"camoufox 浏览器下载完成：{ver}")
+            return True
+        except Exception as e:
             log_event("ERROR", "engine.camoufox",
-                      f"浏览器下载失败：{proc.stderr[-300:] or proc.stdout[-300:]}")
+                      f"浏览器下载失败：{e}。可尝试：①检查网络/代理；"
+                      "②用其他机器下载后复制 %LOCALAPPDATA%\\camoufox 目录")
             return False
-        log_event("INFO", "engine.camoufox", "camoufox 浏览器下载完成")
-        return True
 
     # ---------- 启动 ----------
 

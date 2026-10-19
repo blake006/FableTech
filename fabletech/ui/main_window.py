@@ -28,7 +28,7 @@ class MainWindow(ctk.CTk):
     def __init__(self, app) -> None:
         super().__init__()
         self.app = app
-        self.title("FableTech Browser v1.0.2")
+        self.title("FableTech Browser v1.0.3")
         self.geometry(WINDOW_SIZE)
         self.minsize(980, 640)
         self._set_window_icon()

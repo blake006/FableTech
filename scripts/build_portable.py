@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
 PORTABLE_NAME = "FableTech-portable"
-ZIP_NAME = "FableTech-1.0.2-win-x64-portable.zip"
+ZIP_NAME = "FableTech-1.0.3-win-x64-portable.zip"
 
 HIDDEN_IMPORTS = [
     "camoufox", "camoufox.pkgman", "camoufox.async_api", "camoufox.sync_api",
@@ -36,7 +36,7 @@ HIDDEN_IMPORTS = [
     "customtkinter",
 ]
 
-README_PORTABLE = """FableTech Browser 1.0.2 — 便携版（win-x64）
+README_PORTABLE = """FableTech Browser 1.0.3 — 便携版（win-x64）
 ==========================================
 
 快速开始

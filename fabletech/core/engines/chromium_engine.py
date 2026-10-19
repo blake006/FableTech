@@ -48,15 +48,54 @@ class ChromiumEngine(BrowserEngine):
         return True, ""
 
     def ensure_runtime(self) -> bool:
+        """确保 patchright 与 Chromium 可用。
+
+        冻结环境下不能用 [sys.executable, "-m", "patchright", ...]
+        （会重启 GUI）；改为进程内驱动安装，失败则给出人工指引。
+        """
         ok, _ = self.available()
         if ok:
             return True
-        import subprocess
-        proc = subprocess.run(
-            [sys.executable, "-m", "patchright", "install", "chromium"],
-            capture_output=True, text=True, timeout=1800,
-        )
-        return proc.returncode == 0
+        # 优先：系统已装 Chrome 时直接可用（available 已判定，走到这里说明没有）
+        try:
+            import patchright  # noqa: F401
+        except ImportError:
+            if getattr(sys, "frozen", False):
+                log_event("ERROR", "engine.chromium",
+                          "便携包内 patchright 缺失（环境异常），"
+                          "请重新下载完整便携包")
+                return False
+            import subprocess
+            proc = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "patchright"],
+                capture_output=True, text=True, timeout=600,
+            )
+            if proc.returncode != 0:
+                log_event("ERROR", "engine.chromium",
+                          f"patchright 安装失败：{proc.stderr[-300:]}")
+                return False
+        # 进程内调用 patchright 驱动的 install（等价 CLI install chromium）
+        try:
+            from patchright._impl._driver import (
+                compute_driver_executable, get_driver_env,
+            )
+            import subprocess
+            node, cli = compute_driver_executable()
+            proc = subprocess.run(
+                [str(node), str(cli), "install", "chromium"],
+                capture_output=True, text=True, timeout=1800,
+                env=get_driver_env(),
+            )
+            if proc.returncode == 0:
+                log_event("INFO", "engine.chromium", "Chromium 下载完成")
+                return True
+            log_event("ERROR", "engine.chromium",
+                      f"Chromium 下载失败：{proc.stderr[-300:]}")
+        except Exception as e:
+            log_event("ERROR", "engine.chromium",
+                      f"Chromium 安装异常：{e}。建议直接安装系统 Chrome "
+                      "（https://www.google.com/chrome/）后点「重新检测」")
+        return False
 
     def launch(self, spec: LaunchSpec) -> EngineSession:
         ok, hint = self.available()

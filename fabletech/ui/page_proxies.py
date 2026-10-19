@@ -94,10 +94,14 @@ class ProxiesPage(PageFrame):
 
         ctk.CTkLabel(form, text="类型").pack(anchor="w")
         type_var = ctk.StringVar(value="socks5")
-        ctk.CTkSegmentedButton(form, values=list(ADD_TYPES.values()),
-                               command=lambda v: type_var.set(
-                                   next(k for k, cn in ADD_TYPES.items() if cn == v))
-                               ).set(ADD_TYPES["socks5"]).pack(pady=(0, 8))
+        seg = ctk.CTkSegmentedButton(
+            form, values=list(ADD_TYPES.values()),
+            command=lambda v: type_var.set(
+                next(k for k, cn in ADD_TYPES.items() if cn == v)))
+        # 注意：CTkSegmentedButton.set() 返回 None，不能链式 .pack()
+        # （曾导致「类型」之后的表单全部不渲染）
+        seg.set(ADD_TYPES["socks5"])
+        seg.pack(pady=(0, 8))
         ctk.CTkLabel(form, text="Hysteria2 / AnyTLS 请用「批量导入」粘贴完整 URI"
                                 "（hy2://… / anytls://…）",
                      font=("Microsoft YaHei UI", 10),

@@ -41,6 +41,21 @@ def test_gui_full_construction(tmp_path):
                     f"侧栏 Logo 宽度 {logo.width()} 超出（应≤120，"
                     "未降采样会导致界面错乱）")
                 assert logo.height() <= 120
+
+            # 回归：代理页「新增代理」对话框必须完整构建
+            # （曾因 CTkSegmentedButton.set().pack() 链式调用崩溃，
+            #   导致「类型」之后的表单字段全部不渲染）
+            proxies = win.pages["proxies"]
+            proxies._add_dialog()
+            win.update()
+            entries, segments = _count_widgets(proxies)
+            assert entries >= 5, (
+                f"新增代理对话框只有 {entries} 个输入框（应≥5："
+                "host/port/user/pass/tags），表单渲染不完整")
+            assert segments >= 1, "新增代理对话框缺少类型选择控件"
+            for child in list(proxies.winfo_children()):
+                if isinstance(child, ctk.CTkToplevel):
+                    child.destroy()
         finally:
             win.destroy()
             app.shutdown()
@@ -62,3 +77,22 @@ def test_watermark_js_generation():
     assert "pointer-events:none" in js
     # 名称经 JSON 转义，不产生脚本注入
     assert '\\"' in js or '测试' in js
+
+
+def _count_widgets(parent):
+    """递归统计 CTkEntry 与 CTkSegmentedButton 数量（对话框完整性校验）。"""
+    import customtkinter as ctk
+
+    entries = segments = 0
+
+    def walk(w):
+        nonlocal entries, segments
+        for ch in w.winfo_children():
+            if isinstance(ch, ctk.CTkEntry):
+                entries += 1
+            elif isinstance(ch, ctk.CTkSegmentedButton):
+                segments += 1
+            walk(ch)
+
+    walk(parent)
+    return entries, segments

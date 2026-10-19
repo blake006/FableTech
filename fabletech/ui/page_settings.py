@@ -49,23 +49,40 @@ class SettingsPage(PageFrame):
         self.engine_labels: dict[str, ctk.CTkLabel] = {}
         for name, ok, hint in engine_status():
             row = ctk.CTkFrame(eng_card, fg_color="transparent")
-            row.pack(fill="x", padx=16, pady=3)
+            row.pack(fill="x", padx=16, pady=(2, 8))
             mark = "●" if ok else "○"
             color = "#46A758" if ok else "#F5A524"
+            # 两行布局：名称一行、提示一行（避免窄窗口下横向挤压截断）
             ctk.CTkLabel(row, text=f"{mark} {ENGINE_CN.get(name, name)}",
-                         text_color=color, width=320,
-                         anchor="w").pack(side="left")
-            lbl = ctk.CTkLabel(row, text=hint if not ok else "可用",
-                              wraplength=460, justify="left",
-                              text_color="#9BA0AA")
-            lbl.pack(side="left", fill="x", expand=True)
+                         text_color=color, anchor="w",
+                         font=("Microsoft YaHei UI", 12, "bold")
+                         ).pack(anchor="w")
+            lbl = ctk.CTkLabel(row, text="可用" if ok else hint,
+                              justify="left", anchor="w",
+                              wraplength=820, text_color="#9BA0AA")
+            lbl.pack(anchor="w", fill="x", padx=(18, 0))
             self.engine_labels[name] = lbl
         btn_row = ctk.CTkFrame(eng_card, fg_color="transparent")
-        btn_row.pack(fill="x", padx=16, pady=(4, 12))
+        btn_row.pack(fill="x", padx=16, pady=(4, 4))
         ctk.CTkButton(btn_row, text="一键安装运行时",
                       command=self._install_runtime).pack(side="left", padx=4)
         ctk.CTkButton(btn_row, text="重新检测",
                       command=self._recheck_engines).pack(side="left", padx=4)
+        # 下载代理：camoufox 内核约 1.3GB，国内直连 GitHub 常失败，
+        # 可复用本机已有代理（如 Clash 的 http://127.0.0.1:7890）
+        dl_row = ctk.CTkFrame(eng_card, fg_color="transparent")
+        dl_row.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkLabel(dl_row, text="下载代理（可选）",
+                     text_color="#9BA0AA").pack(side="left")
+        self.dl_proxy_entry = ctk.CTkEntry(
+            dl_row, width=300,
+            placeholder_text="http://127.0.0.1:7890（留空=直连）")
+        saved = self.app.storage.get_setting("engine_download_proxy", "") or ""
+        if saved:
+            self.dl_proxy_entry.insert(0, saved)
+        self.dl_proxy_entry.pack(side="left", padx=8)
+        ctk.CTkButton(dl_row, text="保存", width=70,
+                      command=self._save_dl_proxy).pack(side="left")
 
         # 反检测增强（GeekezBrowser 借鉴）
         adv_card = ctk.CTkFrame(self.body, fg_color="#2A2C33", corner_radius=10)
@@ -144,9 +161,31 @@ class SettingsPage(PageFrame):
         self.app.storage.set_setting("webrtc_block", self.webrtc_var.get())
         self.app.storage.set_setting("watermark", self.watermark_var.get())
 
+    def _save_dl_proxy(self) -> None:
+        """保存引擎下载代理（http/https，留空=直连）。"""
+        url = self.dl_proxy_entry.get().strip()
+        if url and not url.lower().startswith(("http://", "https://")):
+            show_error(self, "格式错误", "代理需为 http:// 或 https:// 开头，"
+                                        "例如 http://127.0.0.1:7890")
+            return
+        self.app.storage.set_setting("engine_download_proxy", url)
+        show_info(self, "已保存",
+                  "下载代理已保存，下次「一键安装运行时」生效" if url
+                  else "已清空下载代理（直连模式）")
+
     def _install_runtime(self) -> None:
-        engines = {name: eng for name, eng in
-                   ((n, None) for n in ("camoufox", "chromium"))}
+        # 应用下载代理：requests 自动读取 HTTP(S)_PROXY 环境变量
+        proxy = (self.app.storage.get_setting("engine_download_proxy", "")
+                 or "").strip()
+        import os
+        if proxy:
+            os.environ["HTTP_PROXY"] = proxy
+            os.environ["HTTPS_PROXY"] = proxy
+            os.environ["http_proxy"] = proxy
+            os.environ["https_proxy"] = proxy
+        else:
+            for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+                os.environ.pop(k, None)
 
         def worker():
             import sys
